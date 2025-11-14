@@ -5,8 +5,8 @@ const { pathfinder, Movements } = require('mineflayer-pathfinder');
 const config = {
     ip: "chupadoresdepika.aternos.me",
     port: 14595,
-    name: "Nig",
-    loginmsg: "ana bot"
+    name: "Nigger[BOT]",
+    loginmsg: "Bot ativo, aternos 24/7 ativado!"
 };
 
 let bot;
@@ -116,4 +116,5 @@ process.on('uncaughtException', (err) => {
     console.error('Uncaught exception:', err);
     // Try to reconnect after fatal error
     setTimeout(createBot, 30000);
+
 });
