@@ -102,19 +102,26 @@ function createBot() {
         return;
     }
 
-    console.log(`[${new Date().toISOString()}] Creating bot...`);
+    console.log(`[${new Date().toISOString()}] Attempting to connect to ${config.ip}:${config.port}...`);
     lastStatus = "Connecting to server...";
 
-    bot = mineflayer.createBot({
-        host: config.ip,
-        port: config.port,
-        username: config.name,
-        version: false, // Auto-detect version
-        auth: 'offline',
-        checkTimeoutInterval: 60000,
-        keepAlive: true,
-        skipValidation: true
-    });
+    try {
+        bot = mineflayer.createBot({
+            host: config.ip,
+            port: config.port,
+            username: config.name,
+            version: false, // Auto-detect version
+            auth: 'offline',
+            checkTimeoutInterval: 60000,
+            keepAlive: true,
+            skipValidation: true
+        });
+    } catch (err) {
+        console.error(`[${new Date().toISOString()}] Failed to create bot: ${err.message}`);
+        lastStatus = "Failed to create bot - retrying...";
+        scheduleReconnect(30000, true); // Keep trying
+        return;
+    }
 
     // Successfully spawned
     bot.once('spawn', () => {
@@ -173,11 +180,22 @@ function createBot() {
         console.log(`[${new Date().toISOString()}] Kicked: ${JSON.stringify(reason)}`);
         botConnected = false;
 
-        // Check if kicked for throttling
-        if (reason && reason.toString().toLowerCase().includes('throttl')) {
+        let reasonStr = '';
+        if (reason && reason.value) {
+            reasonStr = reason.value.toString().toLowerCase();
+        } else if (reason) {
+            reasonStr = reason.toString().toLowerCase();
+        }
+
+        // Check for different kick reasons
+        if (reasonStr.includes('throttl')) {
             console.log("Detected throttling - waiting 60 seconds before reconnecting...");
             lastStatus = "Kicked (throttled) - waiting 60s";
             scheduleReconnect(60000); // Wait 60 seconds for throttling
+        } else if (reasonStr.includes('server closed') || reasonStr.includes('server is restarting')) {
+            console.log("Server closed/restarting - will try reconnecting every 30 seconds...");
+            lastStatus = "Server closed - reconnecting soon";
+            scheduleReconnect(30000, true); // Enable continuous retry for server restarts
         } else {
             lastStatus = "Kicked - reconnecting in 30s";
             scheduleReconnect(30000); // Normal reconnect delay
@@ -190,8 +208,13 @@ function createBot() {
         botConnected = false;
         lastStatus = `Error: ${err.message}`;
 
-        // Don't immediately reconnect on error
-        scheduleReconnect(30000);
+        // Check for common connection errors
+        if (err.message.includes('ECONNREFUSED') || err.message.includes('ETIMEDOUT')) {
+            console.log("Server appears to be offline - will keep retrying...");
+            scheduleReconnect(30000, true); // Keep trying for server offline
+        } else {
+            scheduleReconnect(30000);
+        }
     });
 
     // Handle disconnection
@@ -200,26 +223,23 @@ function createBot() {
         botConnected = false;
         lastStatus = "Disconnected - will reconnect";
 
-        // Longer delay if we see specific disconnection reasons
-        if (reason === 'socketClosed') {
-            scheduleReconnect(45000); // 45 seconds for socket issues
-        } else {
-            scheduleReconnect(30000); // 30 seconds for other disconnects
+        // Only schedule reconnect if not already scheduled
+        if (!isReconnecting && !reconnectTimer) {
+            if (reason === 'socketClosed') {
+                scheduleReconnect(30000, true); // Keep retrying for socket issues
+            } else {
+                scheduleReconnect(30000);
+            }
         }
     });
 }
 
 // Centralized reconnection scheduling to prevent multiple reconnects
-function scheduleReconnect(delay) {
+function scheduleReconnect(delay, continuousRetry = false) {
     // Clear any existing reconnect timer
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
-    }
-
-    // Prevent immediate reconnection attempts
-    if (isReconnecting) {
-        console.log("Already scheduled to reconnect, skipping...");
-        return;
+        reconnectTimer = null;
     }
 
     isReconnecting = true;
@@ -240,7 +260,18 @@ function scheduleReconnect(delay) {
             bot = null;
         }
 
+        // Try to connect
         createBot();
+
+        // If continuous retry is enabled (for server restarts), schedule another attempt
+        if (continuousRetry && !botConnected) {
+            setTimeout(() => {
+                if (!botConnected && !isReconnecting) {
+                    console.log(`[${new Date().toISOString()}] Server still not available, retrying...`);
+                    scheduleReconnect(delay, true); // Keep trying
+                }
+            }, 5000); // Check after 5 seconds if we connected
+        }
     }, delay);
 }
 
