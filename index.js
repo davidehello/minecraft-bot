@@ -69,6 +69,15 @@ function createBot() {
     // Clean up any existing bot first
     cleanupBot();
 
+    // Set connection timeout BEFORE creating bot
+    const connectionTimeout = setTimeout(() => {
+        console.log(`[${new Date().toISOString()}] Connection timeout - server might be offline`);
+        lastError = "Connection timeout - server offline?";
+        cleanupBot();
+        console.log(`[${new Date().toISOString()}] Will retry in 30 seconds...`);
+        setTimeout(createBot, 30000);
+    }, 30000); // 30 second timeout for connection
+
     try {
         bot = mineflayer.createBot({
             host: config.ip,
@@ -83,14 +92,6 @@ function createBot() {
             viewDistance: 'tiny',
             skipValidation: true
         });
-
-        // Set connection timeout
-        const connectionTimeout = setTimeout(() => {
-            console.log(`[${new Date().toISOString()}] Connection timeout - retrying`);
-            lastError = "Connection timeout";
-            cleanupBot();
-            setTimeout(createBot, 30000);
-        }, 60000); // 60 second timeout for connection
 
         bot.once('spawn', () => {
             clearTimeout(connectionTimeout);
@@ -143,13 +144,17 @@ function createBot() {
         });
 
         bot.on('error', (err) => {
+            clearTimeout(connectionTimeout);
             console.log(`[${new Date().toISOString()}] Error: ${err.message}`);
             lastError = err.message;
 
-            // For critical errors, force reconnect
+            // For connection errors, force reconnect
             if (err.message.includes('ECONNREFUSED') ||
                 err.message.includes('ETIMEDOUT') ||
-                err.message.includes('ECONNRESET')) {
+                err.message.includes('ECONNRESET') ||
+                err.message.includes('ENOTFOUND') ||
+                err.message.includes('getaddrinfo')) {
+                console.log(`[${new Date().toISOString()}] Connection failed - server might be offline. Retrying in 30 seconds...`);
                 botConnected = false;
                 cleanupBot();
                 setTimeout(createBot, 30000);
@@ -162,8 +167,10 @@ function createBot() {
         });
 
     } catch (err) {
+        clearTimeout(connectionTimeout);
         console.log(`[${new Date().toISOString()}] Failed to create bot: ${err.message}`);
         lastError = err.message;
+        console.log(`[${new Date().toISOString()}] Will retry in 30 seconds...`);
         setTimeout(createBot, 30000);
     }
 }
@@ -297,11 +304,7 @@ setInterval(() => {
         setTimeout(createBot, 5000);
     }
 
-    // If bot is supposed to be connected but isn't
-    if (!botConnected && reconnectAttempts < 10) {
-        console.log(`[${new Date().toISOString()}] WATCHDOG: Bot offline - attempting reconnect`);
-        createBot();
-    }
+    // Don't create multiple bots - the retry logic will handle it
 }, 60000); // Check every minute
 
 // Process-level error handling
