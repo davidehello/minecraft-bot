@@ -9,8 +9,8 @@ const PORT = process.env.PORT || 10000;
 const config = {
     ip: "chupadoresdepika.aternos.me",
     port: 14595,
-    name: "Nig",
-    loginmsg: "ana bot"
+    name: "BOT",
+    loginmsg: "Bot ativo, aternos 24/7 ativado!"
 };
 
 let bot = null;
