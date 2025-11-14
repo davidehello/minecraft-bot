@@ -1,119 +1,287 @@
 const mineflayer = require('mineflayer');
-const { pathfinder, Movements } = require('mineflayer-pathfinder');
+const express = require('express');
 
-// Server configuration
+// IMPORTANT: Web server for Render (they require an open port)
+const app = express();
+const PORT = process.env.PORT || 10000; // Render uses PORT env variable
+
+app.get('/', (req, res) => {
+    const uptime = Math.floor(process.uptime() / 60);
+    res.send(`
+        <html>
+        <body style="font-family: Arial; background: #1a1a2e; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
+            <div style="text-align: center; padding: 40px; background: rgba(0,0,0,0.5); border-radius: 10px;">
+                <h1>🎮 Minecraft Bot Status</h1>
+                <p style="font-size: 24px; color: ${botConnected ? '#4CAF50' : '#ff9800'};">
+                    ${botConnected ? '✅ Bot Connected' : '⏳ Bot Connecting...'}
+                </p>
+                <p>Server: ${config.ip}:${config.port}</p>
+                <p>Bot: ${config.name}</p>
+                <p>Uptime: ${uptime} minutes</p>
+                <p>Status: ${lastStatus}</p>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
+// Health endpoint for monitoring
+app.get('/health', (req, res) => {
+    res.json({
+        status: botConnected ? 'online' : 'connecting',
+        uptime: process.uptime()
+    });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Web server running on port ${PORT}`);
+});
+
+// Your server configuration
 const config = {
     ip: "chupadoresdepika.aternos.me",
     port: 14595,
-    name: "Nig",
-    loginmsg: "ana bot"
+    name: "Nigger[BOT]",
+    loginmsg: "Bot ativo, aternos 24/7 ativado!"
 };
 
-let bot;
+let bot = null;
+let botConnected = false;
+let lastStatus = "Starting...";
+let isReconnecting = false;
+let reconnectTimer = null;
 
 function createBot() {
-    console.log(`[${new Date().toISOString()}] Connecting to ${config.ip}:${config.port}...`);
+    // Prevent multiple simultaneous connection attempts
+    if (isReconnecting) {
+        console.log(`[${new Date().toISOString()}] Already reconnecting, skipping...`);
+        return;
+    }
+
+    console.log(`[${new Date().toISOString()}] Creating bot...`);
+    lastStatus = "Connecting to server...";
 
     bot = mineflayer.createBot({
         host: config.ip,
         port: config.port,
         username: config.name,
-        version: false, // Auto-detect
-        auth: 'offline'
+        version: false, // Auto-detect version
+        auth: 'offline',
+        checkTimeoutInterval: 60000,
+        keepAlive: true,
+        skipValidation: true
     });
 
-    bot.loadPlugin(pathfinder);
-
+    // Successfully spawned
     bot.once('spawn', () => {
-        console.log(`[${new Date().toISOString()}] Bot spawned! Starting anti-AFK...`);
+        console.log(`[${new Date().toISOString()}] ✅ Bot spawned successfully!`);
+        botConnected = true;
+        isReconnecting = false;
+        lastStatus = "Online and active";
 
-        // Send login message
+        // Clear any pending reconnect timers
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+
+        // Send login message after 3 seconds
         setTimeout(() => {
-            bot.chat(config.loginmsg);
+            if (bot && botConnected) {
+                try {
+                    bot.chat(config.loginmsg);
+                } catch (err) {
+                    console.log("Could not send login message:", err.message);
+                }
+            }
         }, 3000);
 
-        // Start anti-AFK movements
+        // Start anti-AFK
         startAntiAFK();
     });
 
-    // Prevent sleeping (so you can skip night when playing)
+    // Prevent sleeping (so you can skip night)
     bot.on('sleep', () => {
         bot.wake();
     });
 
-    // Auto-respawn
+    // Auto-respawn on death
     bot.on('death', () => {
-        console.log(`[${new Date().toISOString()}] Died! Respawning...`);
+        console.log(`[${new Date().toISOString()}] Bot died! Will respawn...`);
+        lastStatus = "Died - respawning";
     });
 
-    // Respond to chat
+    // Chat commands
     bot.on('chat', (username, message) => {
         if (username === bot.username) return;
 
         if (message.toLowerCase().includes('bot status')) {
-            bot.chat('✓ Online and active!');
+            try {
+                bot.chat('✓ Online and keeping server active!');
+            } catch (err) {
+                console.log("Could not respond to chat:", err.message);
+            }
         }
     });
 
-    // Handle disconnections
-    bot.on('error', (err) => {
-        console.error(`[${new Date().toISOString()}] Error:`, err.message);
+    // Handle kicked - IMPORTANT: Check for throttling
+    bot.on('kicked', (reason) => {
+        console.log(`[${new Date().toISOString()}] Kicked: ${JSON.stringify(reason)}`);
+        botConnected = false;
+
+        // Check if kicked for throttling
+        if (reason && reason.toString().toLowerCase().includes('throttl')) {
+            console.log("Detected throttling - waiting 60 seconds before reconnecting...");
+            lastStatus = "Kicked (throttled) - waiting 60s";
+            scheduleReconnect(60000); // Wait 60 seconds for throttling
+        } else {
+            lastStatus = "Kicked - reconnecting in 30s";
+            scheduleReconnect(30000); // Normal reconnect delay
+        }
     });
 
+    // Handle errors
+    bot.on('error', (err) => {
+        console.error(`[${new Date().toISOString()}] Error: ${err.message}`);
+        botConnected = false;
+        lastStatus = `Error: ${err.message}`;
+
+        // Don't immediately reconnect on error
+        scheduleReconnect(30000);
+    });
+
+    // Handle disconnection
     bot.on('end', (reason) => {
         console.log(`[${new Date().toISOString()}] Disconnected: ${reason}`);
-        // Reconnect after 30 seconds
-        setTimeout(createBot, 30000);
-    });
+        botConnected = false;
+        lastStatus = "Disconnected - will reconnect";
 
-    bot.on('kicked', (reason) => {
-        console.log(`[${new Date().toISOString()}] Kicked: ${reason}`);
-        // Reconnect after 60 seconds if kicked
-        setTimeout(createBot, 60000);
+        // Longer delay if we see specific disconnection reasons
+        if (reason === 'socketClosed') {
+            scheduleReconnect(45000); // 45 seconds for socket issues
+        } else {
+            scheduleReconnect(30000); // 30 seconds for other disconnects
+        }
     });
 }
 
+// Centralized reconnection scheduling to prevent multiple reconnects
+function scheduleReconnect(delay) {
+    // Clear any existing reconnect timer
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+    }
+
+    // Prevent immediate reconnection attempts
+    if (isReconnecting) {
+        console.log("Already scheduled to reconnect, skipping...");
+        return;
+    }
+
+    isReconnecting = true;
+    console.log(`[${new Date().toISOString()}] Will reconnect in ${delay/1000} seconds...`);
+
+    reconnectTimer = setTimeout(() => {
+        isReconnecting = false;
+        reconnectTimer = null;
+
+        // Clean up old bot instance
+        if (bot) {
+            try {
+                bot.removeAllListeners();
+                bot.quit();
+            } catch (err) {
+                // Ignore cleanup errors
+            }
+            bot = null;
+        }
+
+        createBot();
+    }, delay);
+}
+
+// Anti-AFK system
 function startAntiAFK() {
-    // Random movement every 1-2 minutes
-    setInterval(() => {
-        if (!bot || !bot.entity) return;
+    const antiAfkInterval = setInterval(() => {
+        if (!bot || !botConnected) {
+            clearInterval(antiAfkInterval);
+            return;
+        }
 
-        const actions = [
-            () => bot.look(Math.random() * Math.PI * 2, (Math.random() - 0.5) * Math.PI),
-            () => {
-                bot.setControlState('jump', true);
-                setTimeout(() => bot.setControlState('jump', false), 100);
-            },
-            () => {
-                bot.setControlState('forward', true);
-                setTimeout(() => bot.setControlState('forward', false), 500);
-            },
-            () => bot.swingArm()
-        ];
+        try {
+            const actions = [
+                () => bot.look(Math.random() * Math.PI * 2, (Math.random() - 0.5) * Math.PI),
+                () => {
+                    bot.setControlState('jump', true);
+                    setTimeout(() => bot.setControlState('jump', false), 100);
+                },
+                () => {
+                    bot.setControlState('forward', true);
+                    setTimeout(() => {
+                        bot.setControlState('forward', false);
+                    }, 300);
+                },
+                () => bot.swingArm(),
+                () => {
+                    bot.setControlState('sneak', true);
+                    setTimeout(() => bot.setControlState('sneak', false), 1000);
+                }
+            ];
 
-        // Do random action
-        actions[Math.floor(Math.random() * actions.length)]();
+            // Execute random action
+            const action = actions[Math.floor(Math.random() * actions.length)];
+            action();
+        } catch (err) {
+            console.log("Anti-AFK action failed:", err.message);
+        }
+    }, 60000 + Math.random() * 60000); // Every 1-2 minutes
 
-    }, 60000 + Math.random() * 60000); // 1-2 minutes
+    // Status logging every 10 minutes
+    const statusInterval = setInterval(() => {
+        if (!bot || !botConnected) {
+            clearInterval(statusInterval);
+            return;
+        }
 
-    // Log status every 10 minutes
-    setInterval(() => {
-        if (bot && bot.entity) {
+        try {
             console.log(`[${new Date().toISOString()}] Status: Online | Health: ${bot.health}/20 | Food: ${bot.food}/20`);
+            lastStatus = `Online - Health: ${bot.health}/20`;
+        } catch (err) {
+            console.log("Could not log status:", err.message);
         }
     }, 600000);
 }
 
-// Start the bot
-createBot();
-
-// Keep process alive
-process.on('unhandledRejection', (err) => {
-    console.error('Unhandled rejection:', err);
+// Handle process termination gracefully
+process.on('SIGINT', () => {
+    console.log("Shutting down gracefully...");
+    if (bot) {
+        bot.quit();
+    }
+    process.exit(0);
 });
 
+process.on('SIGTERM', () => {
+    console.log("Received SIGTERM, shutting down...");
+    if (bot) {
+        bot.quit();
+    }
+    process.exit(0);
+});
+
+// Catch uncaught exceptions to prevent crashes
 process.on('uncaughtException', (err) => {
     console.error('Uncaught exception:', err);
-    // Try to reconnect after fatal error
-    setTimeout(createBot, 30000);
+    lastStatus = "Recovering from error";
+
+    // Don't immediately try to reconnect
+    if (!isReconnecting) {
+        scheduleReconnect(60000); // Wait 60 seconds after crash
+    }
 });
+
+// Start the bot with initial delay to let server start
+console.log("Starting Minecraft bot in 5 seconds...");
+setTimeout(() => {
+    createBot();
+}, 5000);
