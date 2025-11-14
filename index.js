@@ -15,6 +15,7 @@ const config = {
 
 let bot = null;
 let botConnected = false;
+let isConnecting = false; // Prevent multiple connection attempts
 let afkInterval = null;
 let extraMovementInterval = null;
 let statusInterval = null;
@@ -64,19 +65,27 @@ function cleanupBot() {
 }
 
 function createBot() {
+    // Prevent multiple simultaneous connection attempts
+    if (isConnecting) {
+        console.log(`[${new Date().toISOString()}] Already connecting, skipping...`);
+        return;
+    }
+
+    isConnecting = true;
     console.log(`[${new Date().toISOString()}] Creating bot (attempt ${++reconnectAttempts})...`);
 
     // Clean up any existing bot first
     cleanupBot();
 
-    // Set connection timeout BEFORE creating bot
+    // Set connection timeout BEFORE creating bot (45 seconds for Aternos)
     const connectionTimeout = setTimeout(() => {
         console.log(`[${new Date().toISOString()}] Connection timeout - server might be offline`);
         lastError = "Connection timeout - server offline?";
+        isConnecting = false;
         cleanupBot();
         console.log(`[${new Date().toISOString()}] Will retry in 30 seconds...`);
         setTimeout(createBot, 30000);
-    }, 30000); // 30 second timeout for connection
+    }, 45000); // 45 second timeout for connection (Aternos can be slow)
 
     try {
         bot = mineflayer.createBot({
@@ -95,6 +104,7 @@ function createBot() {
 
         bot.once('spawn', () => {
             clearTimeout(connectionTimeout);
+            isConnecting = false;
             console.log(`[${new Date().toISOString()}] ✅ Bot spawned!`);
             botConnected = true;
             lastActivity = Date.now();
@@ -123,6 +133,7 @@ function createBot() {
             const reasonStr = JSON.stringify(reason).substring(0, 100);
             console.log(`[${new Date().toISOString()}] KICKED: ${reasonStr}`);
             lastError = `Kicked: ${reasonStr}`;
+            isConnecting = false;
             botConnected = false;
             cleanupBot();
 
@@ -138,6 +149,7 @@ function createBot() {
         bot.on('end', (reason) => {
             console.log(`[${new Date().toISOString()}] Disconnected: ${reason}`);
             lastError = `Disconnected: ${reason}`;
+            isConnecting = false;
             botConnected = false;
             cleanupBot();
             setTimeout(createBot, 30000);
@@ -147,6 +159,7 @@ function createBot() {
             clearTimeout(connectionTimeout);
             console.log(`[${new Date().toISOString()}] Error: ${err.message}`);
             lastError = err.message;
+            isConnecting = false;
 
             // For connection errors, force reconnect
             if (err.message.includes('ECONNREFUSED') ||
@@ -168,6 +181,7 @@ function createBot() {
 
     } catch (err) {
         clearTimeout(connectionTimeout);
+        isConnecting = false;
         console.log(`[${new Date().toISOString()}] Failed to create bot: ${err.message}`);
         lastError = err.message;
         console.log(`[${new Date().toISOString()}] Will retry in 30 seconds...`);
@@ -273,21 +287,19 @@ function stopAntiAFK() {
     }
 }
 
-// Reconnect loop
+// Health check loop - only check responsiveness, don't create new connections
 setInterval(() => {
-    if (!botConnected) {
-        console.log(`[${new Date().toISOString()}] Bot offline - reconnecting...`);
-        createBot();
-    } else if (bot && bot.entity) {
+    if (botConnected && bot && bot.entity) {
         // Check if bot is actually responsive
         try {
-            const pos = bot.entity.position;
             // Try to move slightly to test responsiveness
             bot.look(bot.entity.yaw + 0.1, bot.entity.pitch);
         } catch (err) {
-            console.log(`[${new Date().toISOString()}] Bot unresponsive - reconnecting`);
+            console.log(`[${new Date().toISOString()}] Bot unresponsive - forcing disconnect`);
             botConnected = false;
-            if (bot) bot.end();
+            isConnecting = false;
+            cleanupBot();
+            setTimeout(createBot, 5000);
         }
     }
 }, 60000);
