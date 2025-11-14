@@ -1,0 +1,16 @@
+{
+  "name": "minecraft-bot",
+  "version": "1.0.0",
+  "description": "24/7 Minecraft Bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "mineflayer": "^4.14.0",
+    "mineflayer-pathfinder": "^2.4.5"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
