@@ -1,14 +1,22 @@
 const mineflayer = require('mineflayer');
 const express = require('express');
+const https = require('https');
 
 // IMPORTANT: Web server for Render (they require an open port)
 const app = express();
 const PORT = process.env.PORT || 10000; // Render uses PORT env variable
 
+// Get the Render service URL
+const SERVICE_URL = process.env.RENDER_EXTERNAL_URL;
+
 app.get('/', (req, res) => {
     const uptime = Math.floor(process.uptime() / 60);
     res.send(`
         <html>
+        <head>
+            <title>Minecraft Bot Status</title>
+            <meta http-equiv="refresh" content="60">
+        </head>
         <body style="font-family: Arial; background: #1a1a2e; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0;">
             <div style="text-align: center; padding: 40px; background: rgba(0,0,0,0.5); border-radius: 10px;">
                 <h1>🎮 Minecraft Bot Status</h1>
@@ -19,6 +27,9 @@ app.get('/', (req, res) => {
                 <p>Bot: ${config.name}</p>
                 <p>Uptime: ${uptime} minutes</p>
                 <p>Status: ${lastStatus}</p>
+                <p style="margin-top: 20px; font-size: 12px; opacity: 0.7;">
+                    Auto-refresh every 60 seconds to keep service alive
+                </p>
             </div>
         </body>
         </html>
@@ -29,13 +40,46 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
     res.json({
         status: botConnected ? 'online' : 'connecting',
-        uptime: process.uptime()
+        uptime: process.uptime(),
+        lastPing: new Date().toISOString()
+    });
+});
+
+// Keep-alive endpoint
+app.get('/ping', (req, res) => {
+    res.json({
+        message: 'pong',
+        timestamp: Date.now(),
+        botStatus: botConnected ? 'connected' : 'connecting'
     });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Web server running on port ${PORT}`);
+
+    // Start self-pinging after server starts
+    if (SERVICE_URL) {
+        console.log(`Service URL detected: ${SERVICE_URL}`);
+        startSelfPing();
+    } else {
+        console.log('No SERVICE_URL detected - you may need to set up external pinging');
+    }
 });
+
+// Self-ping function to keep Render service alive
+function startSelfPing() {
+    // Ping every 10 minutes to prevent shutdown
+    setInterval(() => {
+        if (SERVICE_URL) {
+            const url = SERVICE_URL.startsWith('http') ? SERVICE_URL : `https://${SERVICE_URL}`;
+            https.get(`${url}/ping`, (res) => {
+                console.log(`[${new Date().toISOString()}] Self-ping successful: ${res.statusCode}`);
+            }).on('error', (err) => {
+                console.error(`Self-ping failed: ${err.message}`);
+            });
+        }
+    }, 10 * 60 * 1000); // Every 10 minutes
+}
 
 // Your server configuration
 const config = {
