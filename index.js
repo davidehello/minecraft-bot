@@ -112,10 +112,28 @@ function createBot() {
             username: config.name,
             version: false, // Auto-detect version
             auth: 'offline',
-            checkTimeoutInterval: 60000,
+            checkTimeoutInterval: 120000, // Increased timeout
             keepAlive: true,
-            skipValidation: true
+            keepAliveInterval: 30000,
+            skipValidation: true,
+            hideErrors: false, // Show errors for debugging
+            closeTimeout: 120000, // Give more time before timing out
+            protocolVersion: null // Let it auto-detect
         });
+
+        // Add timeout handler
+        const connectionTimeout = setTimeout(() => {
+            console.log(`[${new Date().toISOString()}] Connection timeout - server may be starting up`);
+            if (!botConnected) {
+                if (bot) bot.quit();
+                scheduleReconnect(30000, true);
+            }
+        }, 60000); // 60 second connection timeout
+
+        bot.once('spawn', () => {
+            clearTimeout(connectionTimeout); // Clear timeout on successful spawn
+        });
+
     } catch (err) {
         console.error(`[${new Date().toISOString()}] Failed to create bot: ${err.message}`);
         lastStatus = "Failed to create bot - retrying...";
@@ -136,6 +154,11 @@ function createBot() {
             reconnectTimer = null;
         }
 
+        // Log server version info
+        if (bot.version) {
+            console.log(`[${new Date().toISOString()}] Server version: ${bot.version}`);
+        }
+
         // Send login message after 3 seconds
         setTimeout(() => {
             if (bot && botConnected) {
@@ -147,8 +170,9 @@ function createBot() {
             }
         }, 3000);
 
-        // Start anti-AFK
+        // Start anti-AFK and heartbeat
         startAntiAFK();
+        startHeartbeat();
     });
 
     // Prevent sleeping (so you can skip night)
@@ -205,6 +229,13 @@ function createBot() {
     // Handle errors
     bot.on('error', (err) => {
         console.error(`[${new Date().toISOString()}] Error: ${err.message}`);
+
+        // Don't disconnect for packet parsing errors
+        if (err.message.includes('Chunk size') || err.message.includes('partial packet')) {
+            console.log("Packet parsing issue detected - ignoring (likely version mismatch)");
+            return; // Don't disconnect, just ignore the error
+        }
+
         botConnected = false;
         lastStatus = `Error: ${err.message}`;
 
@@ -212,6 +243,9 @@ function createBot() {
         if (err.message.includes('ECONNREFUSED') || err.message.includes('ETIMEDOUT')) {
             console.log("Server appears to be offline - will keep retrying...");
             scheduleReconnect(30000, true); // Keep trying for server offline
+        } else if (err.message.includes('ECONNRESET')) {
+            console.log("Connection reset - reconnecting...");
+            scheduleReconnect(20000); // Shorter delay for connection resets
         } else {
             scheduleReconnect(30000);
         }
@@ -275,8 +309,49 @@ function scheduleReconnect(delay, continuousRetry = false) {
     }, delay);
 }
 
+// Heartbeat system to detect unresponsive bot
+function startHeartbeat() {
+    let lastHeartbeat = Date.now();
+
+    // Update heartbeat on any activity
+    if (bot) {
+        bot.on('move', () => { lastHeartbeat = Date.now(); });
+        bot.on('health', () => { lastHeartbeat = Date.now(); });
+        bot.on('chat', () => { lastHeartbeat = Date.now(); });
+    }
+
+    // Check heartbeat every 2 minutes
+    const heartbeatInterval = setInterval(() => {
+        if (!bot || !botConnected) {
+            clearInterval(heartbeatInterval);
+            return;
+        }
+
+        const timeSinceLastHeartbeat = Date.now() - lastHeartbeat;
+
+        // If no activity for 5 minutes, something's wrong
+        if (timeSinceLastHeartbeat > 5 * 60 * 1000) {
+            console.log(`[${new Date().toISOString()}] No activity for 5 minutes - bot may be frozen`);
+            lastStatus = "Unresponsive - reconnecting";
+            botConnected = false;
+
+            // Force reconnect
+            if (bot) {
+                try {
+                    bot.quit();
+                } catch (err) {
+                    // Ignore
+                }
+            }
+            clearInterval(heartbeatInterval);
+            scheduleReconnect(10000); // Quick reconnect
+        }
+    }, 120000); // Check every 2 minutes
+}
+
 // Anti-AFK system
 function startAntiAFK() {
+    // More frequent anti-AFK to prevent disconnections
     const antiAfkInterval = setInterval(() => {
         if (!bot || !botConnected) {
             clearInterval(antiAfkInterval);
@@ -294,12 +369,23 @@ function startAntiAFK() {
                     bot.setControlState('forward', true);
                     setTimeout(() => {
                         bot.setControlState('forward', false);
+                        // Sometimes walk backward
+                        if (Math.random() > 0.5) {
+                            bot.setControlState('back', true);
+                            setTimeout(() => bot.setControlState('back', false), 300);
+                        }
                     }, 300);
                 },
                 () => bot.swingArm(),
                 () => {
                     bot.setControlState('sneak', true);
                     setTimeout(() => bot.setControlState('sneak', false), 1000);
+                },
+                () => {
+                    // Strafe left or right
+                    const direction = Math.random() > 0.5 ? 'left' : 'right';
+                    bot.setControlState(direction, true);
+                    setTimeout(() => bot.setControlState(direction, false), 500);
                 }
             ];
 
@@ -309,7 +395,7 @@ function startAntiAFK() {
         } catch (err) {
             console.log("Anti-AFK action failed:", err.message);
         }
-    }, 60000 + Math.random() * 60000); // Every 1-2 minutes
+    }, 30000 + Math.random() * 30000); // Every 30-60 seconds (more frequent)
 
     // Status logging every 10 minutes
     const statusInterval = setInterval(() => {
