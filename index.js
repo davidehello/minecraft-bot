@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 10000;
 const config = {
     ip: "chupadoresdepika.aternos.me",
     port: 14595,
-    name: "BOT",
+    name: "BOT1",
     loginmsg: "Bot ativo, aternos 24/7 ativado!"
 };
 
@@ -375,4 +375,5 @@ console.log('=================================');
 console.log(`Connecting to ${config.ip}:${config.port}`);
 
 // Initial connection
+
 setTimeout(createBot, 3000);
