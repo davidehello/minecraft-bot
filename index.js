@@ -5,11 +5,16 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// Function to generate random 5-digit number
+function generateBotUsername() {
+    const randomNum = Math.floor(10000 + Math.random() * 90000); // Generates number between 10000-99999
+    return `BOT_${randomNum}`;
+}
+
 // Your server config
 const config = {
     ip: "chupadoresdepika.aternos.me",
     port: 14595,
-    name: "BOT1",
     loginmsg: "Bot ativo, aternos 24/7 ativado!"
 };
 
@@ -88,10 +93,14 @@ function createBot() {
     }, 45000); // 45 second timeout for connection (Aternos can be slow)
 
     try {
+        // Generate new random username each time
+        const botUsername = generateBotUsername();
+        console.log(`[${new Date().toISOString()}] Using username: ${botUsername}`);
+
         bot = mineflayer.createBot({
             host: config.ip,
             port: config.port,
-            username: config.name,
+            username: botUsername,
             version: false,
             auth: 'offline',
             keepAlive: true,
@@ -375,5 +384,4 @@ console.log('=================================');
 console.log(`Connecting to ${config.ip}:${config.port}`);
 
 // Initial connection
-
 setTimeout(createBot, 3000);
