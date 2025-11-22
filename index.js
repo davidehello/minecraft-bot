@@ -13,7 +13,7 @@ function generateBotUsername() {
 
 // Your server config
 const config = {
-    ip: "chupadoresdepika.aternos.me",
+    ip: "amotecristina.aternos.me",
     port: 14595,
     loginmsg: "Bot ativo, aternos 24/7 ativado!"
 };
@@ -384,4 +384,5 @@ console.log('=================================');
 console.log(`Connecting to ${config.ip}:${config.port}`);
 
 // Initial connection
+
 setTimeout(createBot, 3000);
